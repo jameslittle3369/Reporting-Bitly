@@ -205,6 +205,12 @@ def parse_facets(data, top_n=8):
     return rows
 
 
+def with_pct(rows):
+    """Append each row's percentage share of the total to its label, e.g. 'US (82.3%)'."""
+    total = sum(c for _, c in rows) or 1
+    return [(f"{label} ({c / total * 100:.1f}%)", c) for label, c in rows]
+
+
 def parse_top_links(data, top_n=10):
     if not data:
         return []
@@ -248,18 +254,6 @@ def fetch_group_referrers(group_guid, end_dt, days):
     data = bitly_get(f"/groups/{group_guid}/referrers", unit="day", units=days,
                      unit_reference=unit_reference_str(end_dt))
     return parse_facets(data)
-
-
-def fetch_group_referring_networks(group_guid, end_dt, days):
-    data = bitly_get(f"/groups/{group_guid}/referring_networks", unit="day", units=days,
-                     unit_reference=unit_reference_str(end_dt))
-    return parse_facets(data)
-
-
-def fetch_shorten_counts(group_guid, end_dt, days):
-    data = bitly_get(f"/groups/{group_guid}/shorten_counts", unit="day", units=days,
-                     unit_reference=unit_reference_str(end_dt))
-    return parse_time_series(data, ("shorten_counts", "metrics", "link_clicks"), value_key_candidates=("value", "count", "clicks"))
 
 
 def fetch_qr_scans(group_guid, end_dt, days):
@@ -453,7 +447,6 @@ def stat_box(label, value, color="#4A90D9"):
 def build_email_html(report_date, days, charts, summary, top_links, bitlink_sections, attach_name):
     boxes = (
         stat_box("Total Clicks", fmt_int(summary["total_clicks"]), "#4A90D9")
-        + stat_box("New Links Created", fmt_int(summary["new_links"]), "#E8704A")
         + stat_box("Bitlinks in Group", summary["total_bitlinks"] or "—", "#50C878")
         + stat_box("Top Country", summary["top_country"] or "—", "#9B59B6")
         + stat_box("Top Referrer", summary["top_referrer"] or "—", "#F1C40F")
@@ -497,8 +490,8 @@ def build_email_html(report_date, days, charts, summary, top_links, bitlink_sect
         "</head>",
         '<body style="margin:0;padding:0;background:#F0F2F5;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',Arial,sans-serif;">',
         '<div style="max-width:700px;margin:32px auto;background:#fff;border-radius:12px;box-shadow:0 2px 12px rgba(0,0,0,.1);">',
-        '<!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="mso-width-percent:1000;"><v:fill type="gradient" color="#EE6123" color2="#333333" angle="135"/><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><![endif]-->',
-        '<div style="background-color:#EE6123;background:linear-gradient(135deg,#EE6123 0%,#333333 100%);padding:28px 32px;">',
+        '<!--[if gte mso 9]><v:rect xmlns:v="urn:schemas-microsoft-com:vml" fill="true" stroke="false" style="mso-width-percent:1000;"><v:fill type="gradient" color="#7EC8E3" color2="#3E7CB1" angle="135"/><v:textbox style="mso-fit-shape-to-text:true" inset="0,0,0,0"><![endif]-->',
+        '<div style="background-color:#7EC8E3;background:linear-gradient(135deg,#7EC8E3 0%,#3E7CB1 100%);padding:28px 32px;">',
         '<div style="color:#fff;font-size:20px;font-weight:700;">PayLess Mobile Bitly Report | ' + report_date + '</div>',
         "</div>",
         '<!--[if gte mso 9]></v:textbox></v:rect><![endif]-->',
@@ -507,12 +500,9 @@ def build_email_html(report_date, days, charts, summary, top_links, bitlink_sect
         boxes,
         "</div>",
         chart_section("Clicks Over Time", "clicks"),
-        chart_section("New Links Created", "shorten"),
         chart_section("QR Code Scans", "qr"),
         chart_section("Top Countries", "countries"),
         chart_section("Devices", "devices"),
-        chart_section("Referrers", "referrers"),
-        chart_section("Referring Networks", "referring_networks"),
         top_links_html,
         bitlink_sections,
         '<p style="margin:32px 0 0;font-size:11px;color:#aaa;text-align:center;">',
@@ -617,14 +607,10 @@ def build_interactive_html(report_date, days, series_data, facet_data, top_links
     group_blocks = []
     if series_data.get("clicks")[0]:
         group_blocks.append(line_cfg("clicksChart", "Clicks Over Time", *series_data["clicks"], 0))
-    if series_data.get("shorten")[0]:
-        group_blocks.append(line_cfg("shortenChart", "New Links Created", *series_data["shorten"], 1))
     if series_data.get("qr")[0]:
         group_blocks.append(line_cfg("qrChart", "QR Code Scans", *series_data["qr"], 2))
-    group_blocks.append(donut_cfg("countriesChart", "Top Countries", facet_data.get("countries", [])))
+    group_blocks.append(bar_cfg("countriesChart", "Top Countries", with_pct(facet_data.get("countries", []))))
     group_blocks.append(donut_cfg("devicesChart", "Devices", facet_data.get("devices", [])))
-    group_blocks.append(donut_cfg("referrersChart", "Referrers", facet_data.get("referrers", [])))
-    group_blocks.append(bar_cfg("networksChart", "Referring Networks", facet_data.get("referring_networks", [])))
     group_blocks.append(bar_cfg("topLinksChart", "Top Links by Clicks",
                                 [(bitlink_label(l), c) for l, c in top_links]))
 
@@ -645,7 +631,6 @@ def build_interactive_html(report_date, days, series_data, facet_data, top_links
     stat_html = (
         '<div class="cards">'
         + f'<div class="card c1"><label>Total Clicks</label><div class="val">{fmt_int(sum(series_data["clicks"][1]))}</div></div>'
-        + f'<div class="card c2"><label>New Links Created</label><div class="val">{fmt_int(sum(series_data["shorten"][1]))}</div></div>'
         + f'<div class="card c3"><label>Top Country</label><div class="val">{facet_data.get("countries", [("—", 0)])[0][0]}</div></div>'
         + f'<div class="card c4"><label>Top Referrer</label><div class="val">{facet_data.get("referrers", [("—", 0)])[0][0]}</div></div>'
         + '</div>'
@@ -658,13 +643,37 @@ def build_interactive_html(report_date, days, series_data, facet_data, top_links
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>PayLess Mobile Bitly Report | {report_date}</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script>
+const BASE_OPTS = {{
+  responsive: true, maintainAspectRatio: false,
+  interaction: {{ mode: 'index', intersect: false }},
+  plugins: {{ legend: {{ display: false }},
+    tooltip: {{ backgroundColor: '#111827', padding: 10, cornerRadius: 6,
+               titleFont: {{size:12}}, bodyFont: {{size:12}} }} }},
+  scales: {{
+    x: {{ grid: {{ display: false }}, ticks: {{ color: '#6b7280', font: {{size:11}}, maxRotation: 45, autoSkip: true, maxTicksLimit: 10 }} }},
+    y: {{ grid: {{ color: '#e5e7eb' }}, ticks: {{ color: '#6b7280', font: {{size:11}} }} }}
+  }}
+}};
+function mk(id, type, labels, datasets, extra) {{
+  extra = extra || {{}};
+  const el = document.getElementById(id);
+  if (!el) return;
+  const opts = JSON.parse(JSON.stringify(BASE_OPTS));
+  Object.assign(opts, extra);
+  if (extra.scales) Object.assign(opts.scales, extra.scales);
+  if (extra.plugins) Object.assign(opts.plugins, extra.plugins);
+  if (type === 'doughnut' || type === 'pie') {{ delete opts.scales; }}
+  new Chart(el, {{ type: type, data: {{ labels: labels, datasets: datasets }}, options: opts }});
+}}
+</script>
 <style>
   *,*::before,*::after{{box-sizing:border-box;margin:0;padding:0}}
   body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;background:#F0F2F5;color:#1a1a1a;padding:24px 16px}}
   .wrap{{max-width:1100px;margin:0 auto}}
-  header{{background:linear-gradient(135deg,#EE6123 0%,#333333 100%);color:#fff;border-radius:10px 10px 0 0;padding:28px 32px}}
+  header{{background:linear-gradient(135deg,#7EC8E3 0%,#3E7CB1 100%);color:#fff;border-radius:10px 10px 0 0;padding:28px 32px}}
   header h1{{font-size:22px}}
-  header p{{margin-top:4px;color:#ffe0cc;font-size:13px}}
+  header p{{margin-top:4px;color:#e3f3fb;font-size:13px}}
   .body{{background:#fff;border-radius:0 0 10px 10px;padding:24px 32px;margin-bottom:24px;box-shadow:0 1px 6px rgba(0,0,0,.08)}}
   .cards{{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:24px}}
   .card{{background:#fff;border:1px solid #e5e7eb;border-left:3px solid;border-radius:8px;padding:14px 16px}}
@@ -695,30 +704,6 @@ def build_interactive_html(report_date, days, series_data, facet_data, top_links
     {''.join(bitlink_sections)}
   </div>
 </div>
-<script>
-const BASE_OPTS = {{
-  responsive: true, maintainAspectRatio: false,
-  interaction: {{ mode: 'index', intersect: false }},
-  plugins: {{ legend: {{ display: false }},
-    tooltip: {{ backgroundColor: '#111827', padding: 10, cornerRadius: 6,
-               titleFont: {{size:12}}, bodyFont: {{size:12}} }} }},
-  scales: {{
-    x: {{ grid: {{ display: false }}, ticks: {{ color: '#6b7280', font: {{size:11}}, maxRotation: 45, autoSkip: true, maxTicksLimit: 10 }} }},
-    y: {{ grid: {{ color: '#e5e7eb' }}, ticks: {{ color: '#6b7280', font: {{size:11}} }} }}
-  }}
-}};
-function mk(id, type, labels, datasets, extra) {{
-  extra = extra || {{}};
-  const el = document.getElementById(id);
-  if (!el) return;
-  const opts = JSON.parse(JSON.stringify(BASE_OPTS));
-  Object.assign(opts, extra);
-  if (extra.scales) Object.assign(opts.scales, extra.scales);
-  if (extra.plugins) Object.assign(opts.plugins, extra.plugins);
-  if (type === 'doughnut' || type === 'pie') {{ delete opts.scales; }}
-  new Chart(el, {{ type: type, data: {{ labels: labels, datasets: datasets }}, options: opts }});
-}}
-</script>
 </body>
 </html>"""
     return page
@@ -807,12 +792,10 @@ def main():
 
     print(f"Fetching Bitly group metrics ({days}-day window) ...")
     ts_clicks, v_clicks = fetch_group_clicks(group_guid, end_dt, days)
-    ts_shorten, v_shorten = fetch_shorten_counts(group_guid, end_dt, days)
     ts_qr, v_qr = fetch_qr_scans(group_guid, end_dt, days)
     countries = fetch_group_countries(group_guid, end_dt, days)
     devices = fetch_group_devices(group_guid, end_dt, days)
     referrers = fetch_group_referrers(group_guid, end_dt, days)
-    referring_networks = fetch_group_referring_networks(group_guid, end_dt, days)
     top_links = fetch_top_links(group_guid, end_dt, days)
     total_bitlinks = fetch_group_bitlink_count(group_guid)
 
@@ -832,18 +815,12 @@ def main():
     charts = {}
     if ts_clicks:
         charts["clicks"] = make_line_chart("Clicks Over Time", [("Clicks", ts_clicks, v_clicks)], days)
-    if ts_shorten:
-        charts["shorten"] = make_line_chart("New Links Created", [("New Links", ts_shorten, v_shorten)], days)
     if ts_qr and any(v_qr):
         charts["qr"] = make_line_chart("QR Code Scans", [("Scans", ts_qr, v_qr)], days)
     if countries:
-        charts["countries"] = make_donut_chart("Top Countries", countries)
+        charts["countries"] = make_bar_chart("Top Countries", with_pct(countries))
     if devices:
         charts["devices"] = make_donut_chart("Devices", devices)
-    if referrers:
-        charts["referrers"] = make_donut_chart("Referrers", referrers)
-    if referring_networks:
-        charts["referring_networks"] = make_bar_chart("Referring Networks", referring_networks)
 
     bitlink_email_sections = ""
     for bitlink, d in bitlink_data.items():
@@ -856,7 +833,6 @@ def main():
 
     summary = {
         "total_clicks": sum(v_clicks) if v_clicks else 0,
-        "new_links": sum(v_shorten) if v_shorten else 0,
         "total_bitlinks": fmt_int(total_bitlinks) if total_bitlinks is not None else None,
         "top_country": countries[0][0] if countries else None,
         "top_referrer": referrers[0][0] if referrers else None,
@@ -870,9 +846,8 @@ def main():
 
     interactive_html = build_interactive_html(
         report_date, days,
-        series_data={"clicks": (ts_clicks, v_clicks), "shorten": (ts_shorten, v_shorten), "qr": (ts_qr, v_qr)},
-        facet_data={"countries": countries, "devices": devices, "referrers": referrers,
-                    "referring_networks": referring_networks},
+        series_data={"clicks": (ts_clicks, v_clicks), "qr": (ts_qr, v_qr)},
+        facet_data={"countries": countries, "devices": devices, "referrers": referrers},
         top_links=top_links,
         bitlink_data=bitlink_data,
     )
