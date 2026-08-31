@@ -143,7 +143,7 @@ def unit_reference_str(dt) -> str:
     return dt.strftime("%Y-%m-%dT%H:%M:%S%z")
 
 
-def parse_time_series(data, series_key_candidates=(), value_key_candidates=("clicks", "count")):
+def parse_time_series(data, series_key_candidates=(), value_key_candidates=("clicks", "count", "value")):
     """Parse a Bitly {"<series_key>": [{"date": iso, "<value_key>": n}, ...]} response
     into full-window (timestamps, values) lists, gap-filled with 0 and aligned to TIMEZONE."""
     if not data:
@@ -163,7 +163,7 @@ def parse_time_series(data, series_key_candidates=(), value_key_candidates=("cli
 
     daily = {}
     for point in series:
-        date_str = point.get("date") or point.get("dt") or point.get("timestamp")
+        date_str = point.get("date") or point.get("dt") or point.get("timestamp") or point.get("ts") or point.get("key")
         if not date_str:
             continue
         try:
@@ -259,7 +259,7 @@ def fetch_group_referring_networks(group_guid, end_dt, days):
 def fetch_shorten_counts(group_guid, end_dt, days):
     data = bitly_get(f"/groups/{group_guid}/shorten_counts", unit="day", units=days,
                      unit_reference=unit_reference_str(end_dt))
-    return parse_time_series(data, ("shorten_counts", "link_clicks"), value_key_candidates=("count", "clicks"))
+    return parse_time_series(data, ("shorten_counts", "metrics", "link_clicks"), value_key_candidates=("value", "count", "clicks"))
 
 
 def fetch_qr_scans(group_guid, end_dt, days):
@@ -275,10 +275,21 @@ def fetch_top_links(group_guid, end_dt, days, top_n=10):
 
 
 def fetch_group_bitlink_count(group_guid):
-    data = bitly_get(f"/groups/{group_guid}/bitlinks", size=1)
+    """Bitly's /groups/{guid}/bitlinks uses cursor-based (search_after) pagination
+    with no 'total' field, so the only way to get a count is to page through
+    everything and tally up the links returned per page."""
+    data = bitly_get(f"/groups/{group_guid}/bitlinks", size=100)
     if not data:
         return None
-    return (data.get("pagination") or {}).get("total")
+    total = len(data.get("links", []))
+    next_url = (data.get("pagination") or {}).get("next")
+    while next_url:
+        page = bitly_get(next_url.replace(BITLY_API, ""))
+        if not page:
+            break
+        total += len(page.get("links", []))
+        next_url = (page.get("pagination") or {}).get("next")
+    return total
 
 
 # -- Per-bitlink fetches ---------------------------------------------------------
